@@ -1,0 +1,150 @@
+---
+title: "DATA607_Week10"
+author: "Logan Thomson"
+date: "March 30, 2016"
+output: 
+  html_document:
+    fig_width: 15
+    fig_height: 10
+    theme: flatly
+---
+
+##**Load Libraries**  
+
+
+```{r load_libraries, message=FALSE, results='hide'}
+packages <- c("jsonlite", "dplyr", "tidyr", "ggplot2")
+lapply(packages, library, character.only = T)
+```
+
+
+##**API Calls**  
+
+My key for the New York Times is hidden, but stored in an object called `api_key`.  
+
+```{r, echo=FALSE}
+api_key <- "96c4fded6f626cd559354d41f0e664d0:18:73284354"
+```
+
+Using `paste0`, the API key can be put together with the rest of the URI:  
+
+````{r congress_members_api}
+senate_api <- paste0("http://api.nytimes.com/svc/politics/v3/us/legislative/congress/113/senate/members/current.json?api-key=", api_key)
+
+house_api <- paste0("http://api.nytimes.com/svc/politics/v3/us/legislative/congress/113/house/members/current.json?api-key=", api_key)
+``` 
+
+
+##**Read API and Create Data Frame**  
+
+
+The New York Times provides an API for information about the US Congress. Different API calls can provide summaries of roll-call votes, information on members for current and past iterations of the US Congress, as well as information on bills, presidential nominees for civilian positions, members of congressional committees, and chamber schedules.  
+
+For this assignment, the specific API used is the "Members" request type. The congress number used is 113, which is the lastest complete meeting of the legislative branch (the current session is 114). Because of the way the request is structured, we can only return either the House or the Senate for a particular Congress (indicated by using the chamber name after the congress number).  
+
+Both API requests for the House and Senate are used and stored in data frames named for their respective chamber.  
+
+
+```{r}
+#information on US Senate members
+senate <- fromJSON(senate_api, simplifyVector = TRUE)
+senate <- senate$results
+senate.df <- data.frame(senate[['members']], stringsAsFactors = FALSE)
+
+#information on US House of Representatives members
+house <- fromJSON(house_api, simplifyVector = TRUE)
+house <- house$results
+house.df <- data.frame(house[['members']], stringsAsFactors = FALSE)
+```
+
+
+##**Combining Both Data Frames**  
+
+The data frames created from the returned JSON are nearly similar with the exception of the `district` column that only appears in the House of Representatives information. Following are the Senate column names:  
+
+
+```{r}
+names(senate.df)
+```  
+
+And the House of Representative columns:  
+
+```{r}
+names(house.df)
+```  
+
+To combine the data frames, a "district" column full of `NA`s is added to the Senate data frame so it has the same structure as the House data frame.  Even though the chamber that the particular member belongs to could be determined by looking at the district column, a `chamber` column is added to specify whether the congressional member is a part of the House or Senate.  
+
+Finally, the two data frames are combined into one, called `congress.df` so that information about any member of the legislative branch can be accessed from the same source. 
+
+
+```{r}
+#add "district" column in data frame
+senate.df <- as.data.frame(append(senate.df, list("district" = NA), after = 21))
+
+senate.df$chamber <- "Senate"
+house.df$chamber <- "House"
+
+#combine house and senate data
+congress.df <- rbind(senate.df, house.df)
+
+#preview of data frame - select coulumns used for readability
+head(congress.df[1:5, c(4, 5:7, 17:21, 25)])
+```  
+
+
+##**Insights**  
+
+Before making any plots or graphs of the data, all of the columns in the data frame are factors, and will need to be changed to numeric:  
+
+
+```{r convert_factors_to_num}
+#change character columns to numeric
+convert_cols <- c("seniority", "total_votes", "missed_votes", "total_present", "missed_votes_pct", "votes_with_party_pct")
+congress.df[convert_cols] <- sapply(congress.df[convert_cols], as.character)
+congress.df[convert_cols] <- sapply(congress.df[convert_cols], as.numeric)
+```  
+
+
+###Number of Party Members by Chamber
+
+A quick tally party members by their respective congressional chamber can easily be created using the data:
+
+
+```{r member_count_by_party}
+ggplot(congress.df, aes(party)) + geom_bar(aes(fill = party), position = "dodge") + scale_fill_manual(values = setNames(c("#0066FF", "#339966","#FF0033"), c("D", "I", "R"))) + facet_grid(. ~ chamber) + labs(title = "Party Counts by Chamber", x = "Political Party") + theme(text = element_text(size=20))
+```  
+
+###Voting with Party Lines
+
+A neat way to do a scatter plot with the names as the points on the plot, rather than circles or other shapes. Below are the members of congress who vote with their party 75% of the time or less, and the corresponding seniority of that member.  The lower the number, the higher the rank, which is primarily based on number of terms served.  
+
+
+```{r vote_with_party}
+#Congressional members who vote with party 75% or less, by seniority
+congress.df %>%
+filter(votes_with_party_pct <= 75 & votes_with_party_pct != 0) %>%
+ggplot(aes(votes_with_party_pct, seniority, label = paste(first_name, last_name))) + geom_label(aes(fill = party), colour = "white", fontface = "bold") + scale_fill_manual(values = setNames(c("#0066FF", "#339966","#FF0033"), c("D", "I", "R"))) + labs(title = "Pct. Voting with Party by Seniority", x = "Votes w/Party %") + theme(text = element_text(size=20))
+```  
+
+###Missing Votes
+
+Same method as above, though not the best way to visualize this data. Below are the members of congress who missed at least 5% of their votes, with the percentage on the y-axis, and the total votes on the x-axis.  
+
+
+```{r pct_missed_votes}
+#Percent of missed votes
+congress.df %>%
+  filter(missed_votes_pct >= 5) %>% 
+  ggplot(aes(total_votes, missed_votes_pct, label = paste(first_name, last_name))) + geom_label(aes(fill = party), colour = "white", fontface = "bold") + scale_fill_manual(values = setNames(c("#0066FF", "#339966","#FF0033"), c("D", "I", "R"))) + labs(title = "Congressional Members With More Than 5% Votes Missed", x = "Total Votes", y = "% Missed Votes") + theme(text = element_text(size=20))
+```  
+
+
+Lastly, here are the members of the 113^th^ congress who missed the most votes by last name. The bars are colored according to party affiliation:
+
+
+```{r missed_votes_bar}
+congress.df %>%
+  filter(missed_votes_pct >= 15) %>%
+  ggplot(aes(last_name, missed_votes_pct)) + geom_bar(stat = "identity", aes(fill = party)) + scale_fill_manual(values = setNames(c("#0066FF", "#339966","#FF0033"), c("D", "I", "R"))) + geom_text(aes(label = missed_votes_pct), color="white", vjust=1.5) +  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + labs(title = "Congressional Members Missed Votes (min. 15%)", x = "Last Name", y = "% of Votes Missed") + theme(text = element_text(size=20))
+```
